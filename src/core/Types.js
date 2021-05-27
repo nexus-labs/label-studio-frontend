@@ -15,9 +15,6 @@ function _oneOf(lookup, err) {
         if (arr.find(val => sn.type === val)) {
           return lookup(sn.type);
         } else {
-          console.log("12345: Not expecting tag: " + sn.type);
-          console.log(arr);
-          console.log(sn);
           throw Error(err + sn.type);
         }
       },
