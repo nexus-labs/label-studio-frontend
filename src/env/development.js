@@ -1,6 +1,8 @@
 import External from "../core/External";
 import Messages from "../utils/messages";
 
+import { PDFDocument } from "../examples/pdf_document";
+
 /**
  * Text
  */
@@ -48,7 +50,7 @@ import { TimeSeries } from "../examples/timeseries"; // eslint-disable-line no-u
  */
 // import { AllTypes } from "../examples/all_types"; // eslint-disable-line no-unused-vars
 
-const data = TranscribeAudio;
+const data = PDFDocument;
 
 /**
  * Get current config

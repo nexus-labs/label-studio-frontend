@@ -1,0 +1,16 @@
+.container {
+  position: relative;
+}
+
+.contents {
+  height: 100vh;
+  overflow-x: hidden;
+  overflow-y: hidden;
+  display: hidden;
+  canvas {
+    width: 100% !important;
+    height: 100vh !important;
+    object-fit: contain;
+    object-position: 0px 0px;
+  }
+}
