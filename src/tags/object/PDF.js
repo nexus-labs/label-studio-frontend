@@ -16,6 +16,10 @@ import { splitBoundaries } from "../../utils/html";
 import Utils from "../../utils";
 import { HyperTextModel } from "./HyperText";
 import PDFView from "../../components/PDFView/PDFView";
+import Waveform from "../../components/Waveform/Waveform";
+import AudioControls from "./Audio/Controls";
+
+import styles from "./PDF/PDF.module.scss";
 
 const TagAttrs = types.model({
   name: types.identifier,
@@ -100,7 +104,20 @@ const Model = types
 
 const PDFModel = types.compose("PDFModel", TagAttrs, Model, ProcessAttrsMixin, ObjectBase);
 
-const HtxPDF = inject("store")(PDFView);
+const HtxPDFView = ({ store, item }) => {
+  if (!item._value) return null;
+
+  return (
+    <ObjectTag item={item} style={styles} className={styles.outer}>
+      {item.errors?.map(error => (
+        <ErrorMessage error={error} />
+      ))}
+      <PDFView src={item._value} />
+    </ObjectTag>
+  );
+};
+
+const HtxPDF = inject("store")(HtxPDFView);
 
 Registry.addTag("pdf", PDFModel, HtxPDF);
 Registry.addObjectType(PDFModel);
