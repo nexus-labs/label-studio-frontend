@@ -51,7 +51,7 @@ import { TimeSeries } from "../examples/timeseries"; // eslint-disable-line no-u
 // import { AllTypes } from "../examples/all_types"; // eslint-disable-line no-unused-vars
 
 const data = PDFDocument;
-
+// const data = HTMLDocument;
 /**
  * Get current config
  * @param {string} pathToConfig

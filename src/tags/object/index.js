@@ -7,4 +7,13 @@ import { TimeSeriesModel } from "./TimeSeries";
 import { ParagraphsModel } from "./Paragraphs";
 import { PDFModel } from "./PDF";
 
-export { AudioModel, AudioPlusModel, HyperTextModel, ImageModel, TextModel, ParagraphsModel, TimeSeriesModel };
+export {
+  AudioModel,
+  AudioPlusModel,
+  HyperTextModel,
+  ImageModel,
+  TextModel,
+  ParagraphsModel,
+  TimeSeriesModel,
+  PDFModel,
+};
