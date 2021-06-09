@@ -245,15 +245,14 @@ class PDFPieceView extends Component {
 
       const pdfHeight = this.state.pdfHeight;
 
-      const findNode = (el, left, top) => {
-        // let left = _left;
-        // let top = _top;
+      const findNode = (el, left, top, text) => {
         const traverse = (node, _left, _top) => {
-          console.log(node);
-          console.log(`top: ${top}, offsetTop: ${_top}`);
           if (top <= _top && left <= _left) {
             if (node.nodeName === "#text") {
-              return node;
+              const index = node.nodeValue.indexOf(text);
+              if (index != -1) {
+                return { node, index };
+              }
             }
           }
 
@@ -284,17 +283,13 @@ class PDFPieceView extends Component {
       console.log(`pdfHeight: ${pdfHeight}, clientHeight: ${textLayer.clientHeight}`);
       const scale = textLayer.clientHeight / pdfHeight;
 
-      //querySelector('div[data-page-number="1"]');
-      const ss = findNode(textLayer, r.x * scale, r.y * scale);
-      //const ee = findNode(textLayer, (r.x + r.width) * scale, (r.y + r.height) * scale);
+      const ss = findNode(textLayer, r.x * scale, r.y * scale, r.text);
       console.log(ss);
-      //console.log(ee);
       if (!ss) return;
 
       const range = document.createRange();
-      //range.selectNode(ss.node);
-      range.setStart(ss, 0);
-      range.setEnd(ss, ss.length);
+      range.setStart(ss.node, ss.index);
+      range.setEnd(ss.node, r.text.length);
 
       if (!r.text && range.toString()) {
         r.setText(range.toString());
