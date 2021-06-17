@@ -357,11 +357,17 @@ class PDFPieceView extends Component {
         return traverse(el, el.offsetLeft, el.offsetTop);
       };
 
-      const page = document.querySelector(`div[data-page-number="${r.page}"]`);
+      let page = document.querySelector(`div[data-page-number="${r.page}"]`);
+      while (page === null || page === undefined) {
+        console.log(`[${r.page}] start: ${new Date()}`);
+        await sleep(1000);
+        console.log(`[${r.page}] end: ${new Date()}`);
+        page = document.querySelector(`div[data-page-number="${r.page}"]`);
+      }
       let textLayer = page.querySelector(".textLayer");
       while (textLayer === null || textLayer === undefined) {
         console.log(`[${r.page}] start: ${new Date()}`);
-        await sleep(2000 * r.page);
+        await sleep(1000);
         console.log(`[${r.page}] end: ${new Date()}`);
         textLayer = page.querySelector(".textLayer");
       }
@@ -370,9 +376,9 @@ class PDFPieceView extends Component {
       console.log(`pdfHeight: ${pdfHeight}, clientHeight: ${textLayer.clientHeight}`);
       const scale = textLayer.clientHeight / pdfHeight;
 
-      console.log(`----- findNode start ${new Date()} -----`);
+      console.log(`[${r.page}] ----- findNode start ${new Date()} -----`);
       const ss = findNode(textLayer, r.left * scale, r.top * scale, r.text);
-      console.log(`----- findNode end ${new Date()} -----`);
+      console.log(`[${r.page}] ----- findNode end ${new Date()} -----`);
       console.log(ss);
       if (!ss) return;
 

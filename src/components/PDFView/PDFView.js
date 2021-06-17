@@ -4,7 +4,12 @@ import styles from "./PDFView.module.scss";
 import React from "react";
 import ReactDOM from "react-dom";
 
-import { PDFViewer, EventBus, PDFSidebar } from "pdfjs-dist/es5/web/pdf_viewer";
+import {
+  EventBus,
+  PDFPageView,
+  DefaultTextLayerFactory,
+  DefaultAnnotationLayerFactory,
+} from "pdfjs-dist/es5/web/pdf_viewer";
 import pdfViewerStyle from "pdfjs-dist/es5/web/pdf_viewer.css";
 import { getDocument, GlobalWorkerOptions, version } from "pdfjs-dist/es5/build/pdf";
 import { observer } from "mobx-react";
@@ -35,25 +40,33 @@ export default class PDFView extends React.Component {
 
   loadPDF = async () => {
     const { parent } = this.props;
-    console.log(parent);
     try {
       const cancelablePDF = makeCancellable(getDocument(this.props.src).promise);
       this.runningTask = cancelablePDF;
       const pdf = await cancelablePDF.promise;
-      const container = document.getElementById("container");
       const viewer = document.getElementById("viewer");
       const eventBus = new EventBus();
-      const pdfViewer = new PDFViewer({
-        container: container,
-        viewer: viewer,
-        eventBus: eventBus,
-        textLayerMode: 2,
-      });
-      pdfViewer.setDocument(pdf);
 
-      const firstPage = await pdfViewer.firstPagePromise;
-      const viewport = firstPage.getViewport({ scale: 1 });
-      parent.loadFinished(viewport.height, viewport.width);
+      for (let i = 1; i <= pdf.numPages; i++) {
+        pdf.getPage(i).then(pdfPage => {
+          const viewport = pdfPage.getViewport({ scale: 1 });
+          var pdfPageView = new PDFPageView({
+            container: viewer,
+            id: `${i}`,
+            scale: 1.0,
+            eventBus: eventBus,
+            defaultViewport: viewport.clone(),
+            textLayerMode: 2,
+            textLayerFactory: new DefaultTextLayerFactory(),
+            annotationLayerFactory: new DefaultAnnotationLayerFactory(),
+          });
+          if (i === 1) {
+            parent.loadFinished(viewport.height, viewport.width);
+          }
+          pdfPageView.setPdfPage(pdfPage);
+          return pdfPageView.draw();
+        });
+      }
     } catch (e) {
       console.log(e);
     }
