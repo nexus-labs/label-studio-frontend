@@ -12,6 +12,7 @@ const obtainWatcher = node => {
   switch (node.type) {
     case "textregion":
     case "hypertextregion":
+    case "pdfregion":
     case "audioregion":
     case "paragraphs":
       return DOMWatcher;

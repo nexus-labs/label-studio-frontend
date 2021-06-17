@@ -14,10 +14,10 @@ const Model = types
     type: "pdfregion",
     object: types.late(() => types.reference(PDFModel)),
 
-    x: types.number,
-    y: types.number,
-    width: types.number,
-    height: types.number,
+    top: types.number,
+    left: types.number,
+    bottom: types.number,
+    right: types.number,
     page: types.number,
 
     text: types.string, // types.string
@@ -54,11 +54,11 @@ const Model = types
       console.log("serialize...");
       let res = {
         value: {
-          // x: self.x,
-          // y: self.y,
-          // width: self.width,
-          // height: self.height,
-          // page: self.page,
+          top: self.top,
+          left: self.left,
+          bottom: self.bottom,
+          right: self.right,
+          page: self.page,
         },
       };
 
@@ -66,6 +66,8 @@ const Model = types
         res.value["text"] = self.text;
       }
 
+      console.log("response...");
+      console.log(res);
       return res;
     },
   }));

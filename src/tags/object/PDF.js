@@ -19,9 +19,10 @@ import PDFView from "../../components/PDFView/PDFView";
 import styles from "./PDF/PDF.module.scss";
 import Utils from "../../utils";
 import * as xpath from "xpath-range";
-import { splitBoundaries } from "../../utils/html";
+import { normalizeBoundaries, splitBoundaries } from "../../utils/html";
 import ToolsManager from "../../tools/Manager";
 import * as Tools from "../../tools";
+import { restoreNewsnapshot } from "../../core/Helpers";
 
 const TagAttrs = types.model("PDFModel", {
   name: types.identifier,
@@ -70,6 +71,11 @@ const Model = types
       self._value = parseValue(self.value, store.task.dataObj);
     },
 
+    afterCreate() {
+      self._regionsCache = [];
+      self.savetextresult = "yes";
+    },
+
     createRegion(p) {
       console.log(`createRegion: ${p}`);
       const r = PDFRegionModel.create({
@@ -101,11 +107,40 @@ const Model = types
      * @param {*} fromModel
      */
     fromStateJSON(obj, fromModel) {
-      // TODO: need to implement
+      let r;
+      let m;
       console.log("fromStateJSON...");
       const fm = self.annotation.names.get(obj.from_name);
       fm.fromStateJSON(obj);
       if (!fm.perregion && fromModel.type !== "labels") return;
+      const { x, y, height, width, page } = obj.value;
+
+      r = self.findRegion({ x, y, page });
+
+      if (fromModel) {
+        m = restoreNewsnapshot(fromModel);
+
+        if (r && fromModel.perregion) {
+          r.states.push(m);
+        } else {
+          const data = {
+            pid: obj.id,
+            parentID: obj.parent_id === null ? "" : obj.parent_id,
+            x: x,
+            y: y,
+            page: page,
+            score: obj.score,
+            readonly: obj.readonly,
+            text: self._value,
+            normalization: obj.normalization,
+            states: [m],
+          };
+
+          r = self.createRegion(data);
+        }
+      }
+
+      return r;
     },
   }));
 
@@ -145,12 +180,15 @@ class PDFPieceView extends Component {
     if (selection.isCollapsed) return [];
 
     const granularityDisabled = ev.altKey;
+    const pdfHeight = this.state.pdfHeight;
 
     for (i = 0; i < selection.rangeCount; i++) {
       var r = selection.getRangeAt(i);
-
       try {
         const page = r.commonAncestorContainer.parentElement.closest(".page");
+        let textLayer = page.querySelector(".textLayer");
+        const scale = textLayer.clientHeight / pdfHeight;
+
         var normedRange = xpath.fromRange(r, self.myRef);
 
         splitBoundaries(r);
@@ -168,14 +206,13 @@ class PDFPieceView extends Component {
         const ss = Utils.HTML.toGlobalOffset(self.myRef, r.startContainer, r.startOffset);
         const ee = Utils.HTML.toGlobalOffset(self.myRef, r.endContainer, r.endOffset);
 
-        // normedRange.startOffset = ss;
-        // normedRange.endOffset = ee;
-        normedRange.height = r.commonAncestorContainer.parentElement.offsetHeight;
-        normedRange.width = r.commonAncestorContainer.parentElement.offsetWidth;
-        normedRange.x = r.commonAncestorContainer.parentElement.offsetTop;
-        normedRange.y = r.commonAncestorContainer.parentElement.offsetLeft;
+        normedRange.top = r.startContainer.parentElement.offsetTop / scale;
+        normedRange.left = r.startContainer.parentElement.offsetLeft / scale;
         //console.log(r.commonAncestorContainer.parentElement);
 
+        normedRange.bottom =
+          (r.endContainer.parentElement.offsetTop + r.endContainer.parentElement.offsetHeight) / scale;
+        normedRange.right = 0;
         console.log(normedRange);
         // If the new range falls fully outside our this.element, we should
         // add it back to the document but not return it from this method.
@@ -235,9 +272,7 @@ class PDFPieceView extends Component {
     };
 
     const checkItems = async r => {
-      console.log(r.page);
-      console.log(r.x);
-      console.log(r.y);
+      console.log(r);
       // spans can be totally missed if this is app init or undo/redo
       // or they can be disconnected from DOM on annotations switching
       // so we have to recreate them from regions data
@@ -246,23 +281,75 @@ class PDFPieceView extends Component {
       const pdfHeight = this.state.pdfHeight;
 
       const findNode = (el, left, top, text) => {
+        let isFinished = false;
+        let textIndex = 0;
+        let result = {};
         const traverse = (node, _left, _top) => {
           if (top <= _top && left <= _left) {
             if (node.nodeName === "#text") {
-              const index = node.nodeValue.indexOf(text);
+              const newText = text.substring(textIndex);
+              const index = node.nodeValue.indexOf(newText);
               if (index != -1) {
-                return { node, index };
+                isFinished = true;
+                if (textIndex === 0) {
+                  return { start: { node: node, index: index }, end: { node: node, index: index + newText.length } };
+                } else {
+                  return { end: { node: node, index: newText.length } };
+                }
+              } else {
+                let searched = 0;
+                for (let i = 0; i < newText.length; i++) {
+                  const check = node.nodeValue.indexOf(newText.charAt(i), searched);
+                  if (check === -1) {
+                    if (i === 0) {
+                      return null;
+                    }
+                    searched += 1;
+                    i = -1;
+                  } else {
+                    if (check != 0 && check !== searched) {
+                      i = -1;
+                    }
+                    searched = check + 1;
+                  }
+                  if (node.nodeValue.length <= searched) {
+                    if (i === -1) {
+                      return null;
+                    }
+                    textIndex += searched;
+                    if ("start" in result) {
+                      return {};
+                    }
+                    return { start: { node: node, index: searched - i - 1 } };
+                  }
+                }
+              }
+            } else {
+              for (var i = 0; i <= node.childNodes?.length; i++) {
+                const n = node.childNodes[i];
+                if (n) {
+                  const offsetLeft = n.offsetLeft && n.offsetLeft > 0 ? n.offsetLeft : _left;
+                  const offsetTop = n.offsetTop && n.offsetTop > 0 ? n.offsetTop : _top;
+                  const res = traverse(n, offsetLeft, offsetTop);
+                  if (res) {
+                    result = Object.assign(result, res);
+                  }
+                  if (isFinished) return result;
+                }
               }
             }
-          }
-
-          for (var i = 0; i <= node.childNodes?.length; i++) {
-            const n = node.childNodes[i];
-            if (n) {
-              const offetLeft = _left + (n.offsetLeft ? n.offsetLeft : 0);
-              const offsetTop = _top + (n.offsetTop ? n.offsetTop : 0);
-              const res = traverse(n, offetLeft, offsetTop);
-              if (res) return res;
+          } else {
+            for (var i = 0; i <= node.childNodes?.length; i++) {
+              const n = node.childNodes[i];
+              if (n) {
+                const offsetLeft = n.offsetLeft && n.offsetLeft > 0 ? n.offsetLeft : _left;
+                const offsetTop = n.offsetTop && n.offsetTop > 0 ? n.offsetTop : _top;
+                const res = traverse(n, offsetLeft, offsetTop);
+                if (res) {
+                  result = Object.assign(result, res);
+                }
+                if (isFinished) return result;
+              }
             }
           }
         };
@@ -273,9 +360,9 @@ class PDFPieceView extends Component {
       const page = document.querySelector(`div[data-page-number="${r.page}"]`);
       let textLayer = page.querySelector(".textLayer");
       while (textLayer === null || textLayer === undefined) {
-        console.log(`start: ${new Date()}`);
-        await sleep(1000);
-        console.log(`end: ${new Date()}`);
+        console.log(`[${r.page}] start: ${new Date()}`);
+        await sleep(2000 * r.page);
+        console.log(`[${r.page}] end: ${new Date()}`);
         textLayer = page.querySelector(".textLayer");
       }
       console.log(page);
@@ -283,13 +370,15 @@ class PDFPieceView extends Component {
       console.log(`pdfHeight: ${pdfHeight}, clientHeight: ${textLayer.clientHeight}`);
       const scale = textLayer.clientHeight / pdfHeight;
 
-      const ss = findNode(textLayer, r.x * scale, r.y * scale, r.text);
+      console.log(`----- findNode start ${new Date()} -----`);
+      const ss = findNode(textLayer, r.left * scale, r.top * scale, r.text);
+      console.log(`----- findNode end ${new Date()} -----`);
       console.log(ss);
       if (!ss) return;
 
       const range = document.createRange();
-      range.setStart(ss.node, ss.index);
-      range.setEnd(ss.node, r.text.length);
+      range.setStart(ss.start.node, ss.start.index);
+      range.setEnd(ss.end.node, ss.end.index);
 
       if (!r.text && range.toString()) {
         r.setText(range.toString());
