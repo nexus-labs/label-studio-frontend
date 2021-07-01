@@ -11,6 +11,7 @@ const parentImagePropsWatch = {
 const obtainWatcher = node => {
   switch (node.type) {
     case "richtextregion":
+    case "pdfregion":
     case "audioregion":
     case "paragraphs":
       return DOMWatcher;

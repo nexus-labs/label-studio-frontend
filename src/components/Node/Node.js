@@ -64,6 +64,7 @@ const NodeViews = {
   ChoicesModel: ["Classification", ApartmentOutlined, () => null],
 
   TextAreaModel: ["Input", MessageOutlined, () => null],
+  PDFRegionModel: ["PDF", FontColorsOutlined, node => <span className={null}>{node.text}</span>],
 };
 
 const Node = observer(({ className, node }) => {

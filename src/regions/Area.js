@@ -10,6 +10,7 @@ import { RichTextRegionModel } from "./RichTextRegion";
 import { BrushRegionModel } from "./BrushRegion";
 import { TimeSeriesRegionModel } from "./TimeSeriesRegion";
 import { ParagraphsRegionModel } from "./ParagraphsRegion";
+import { PDFRegionModel } from "./PDFRegion";
 
 // general Area type for classification Results which doesn't belong to any real Area
 const ClassificationArea = types.compose(
@@ -56,6 +57,7 @@ const Area = types.union(
   EllipseRegionModel,
   PolygonRegionModel,
   BrushRegionModel,
+  PDFRegionModel,
   ClassificationArea,
 );
 

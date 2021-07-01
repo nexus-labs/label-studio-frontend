@@ -3,6 +3,8 @@
 import External from "../core/External";
 import Messages from "../utils/messages";
 
+import { PDFDocument } from "../examples/pdf_document";
+
 /**
  * Text
  */
@@ -60,7 +62,8 @@ import { TimeSeriesSingle } from "../examples/timeseries_single";
  */
 // import { AllTypes } from "../examples/all_types";
 
-const data = RichTextPlainRemote;
+// const data = RichTextPlainRemote;
+const data = PDFDocument;
 
 function getData(task) {
   if (task && task.data) {

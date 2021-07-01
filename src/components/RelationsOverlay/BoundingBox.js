@@ -69,6 +69,7 @@ const _detect = region => {
   switch (region.type) {
     case "textrange":
     case "richtextregion":
+    case "pdfregion":
     case "textarearegion":
     case "audioregion":
     case "paragraphs":
