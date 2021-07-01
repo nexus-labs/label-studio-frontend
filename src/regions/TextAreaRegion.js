@@ -6,7 +6,7 @@ import WithStatesMixin from "../mixins/WithStates";
 import NormalizationMixin from "../mixins/Normalization";
 import RegionsMixin from "../mixins/Regions";
 import Registry from "../core/Registry";
-import { TextAreaModel } from "../tags/control/TextArea";
+import { TextAreaModel } from "../tags/control/TextArea/TextArea";
 import { guidGenerator } from "../core/Helpers";
 
 import styles from "./TextAreaRegion/TextAreaRegion.module.scss";
@@ -31,7 +31,7 @@ const Model = types
     get parent() {
       return getParentOfType(self, TextAreaModel);
     },
-    get regionElement() {
+    getRegionElement() {
       return document.querySelector(`#TextAreaRegion-${self.id}`);
     },
   }))

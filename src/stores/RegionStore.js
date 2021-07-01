@@ -1,6 +1,9 @@
 import { types, getParent, getEnv, onPatch } from "mobx-state-tree";
 
-import Hotkey from "../core/Hotkey";
+import { Hotkey } from "../core/Hotkey";
+import { isDefined } from "../utils/utilities";
+
+const hotkeys = Hotkey("RegionStore");
 
 export default types
   .model("RegionStore", {
@@ -18,6 +21,7 @@ export default types
 
     get classifications() {
       const textAreas = Array.from(self.annotation.names.values())
+        .filter(t => isDefined(t))
         .filter(t => t.type === "textarea" && !t.perregion)
         .map(t => t.regions);
 
@@ -26,6 +30,10 @@ export default types
 
     get regions() {
       return Array.from(self.annotation.areas.values()).filter(area => !area.classification);
+    },
+
+    get isAllHidden() {
+      return !self.regions.find(area => !area.hidden);
     },
 
     get sortedRegions() {
@@ -74,26 +82,30 @@ export default types
 
     asLabelsTree(enrich) {
       // collect all label states into two maps
-      const labels = {};
+      let labels = {};
       const map = {};
       self.regions.forEach(r => {
-        const l = r.labeling;
-        if (l) {
-          const selected = l.selectedLabels;
-          selected &&
-            selected.forEach(s => {
-              labels[s._value] = s;
-              if (s._value in map) map[s._value].push(r);
-              else map[s._value] = [r];
-            });
+        const selectedLabels = r.labeling?.selectedLabels || r.emptyLabel && [r.emptyLabel];
+        if (selectedLabels) {
+          selectedLabels.forEach(s => {
+            const key = `${s.value}#${s.id}`;
+            labels[key] = s;
+            if (key in map) map[key].push(r);
+            else map[key] = [r];
+          });
+        } else {
+          const key = `_empty`;
+          labels = {[key]: {id: key, isNotLabel: true}, ...labels};
+          if (key in map) map[key].push(r);
+          else map[key] = [r];
         }
       });
 
       // create the tree
       let idx = 0;
-      const tree = Object.keys(labels).map(lname => {
-        const el = enrich(labels[lname], idx, true);
-        el["children"] = map[lname].map(r => enrich(r, idx++));
+      const tree = Object.keys(labels).map(key => {
+        const el = enrich(labels[key], idx, true, map[key]);
+        el["children"] = map[key].map(r => enrich(r, idx++));
 
         return el;
       });
@@ -103,8 +115,9 @@ export default types
   }))
   .actions(self => ({
     addRegion(region) {
+      console.log({region});
       self.regions.push(region);
-      getEnv(self).onEntityCreate(region);
+      getEnv(self).events.invoke('entityCreate', region);
     },
 
     toggleSortOrder() {
@@ -147,7 +160,7 @@ export default types
         }
       }
 
-      getEnv(self).onEntityDelete(region);
+      getEnv(self).events.invoke('entityDelete', region);
       self.initHotkeys();
     },
 
@@ -175,13 +188,11 @@ export default types
     // init Alt hotkeys for regions selection
     initHotkeys() {
       const PREFIX = "alt+shift+";
-      const keys = Hotkey.getKeys();
-      const rkeys = keys.filter(k => k.indexOf(PREFIX) !== -1);
 
-      rkeys.forEach(k => Hotkey.removeKey(k));
+      hotkeys.unbindAll();
 
       self.sortedRegions.forEach((r, n) => {
-        Hotkey.addKey(PREFIX + (n + 1), function() {
+        hotkeys.addKey(PREFIX + (n + 1), function() {
           self.unselectAll();
           r.selectRegion();
         });
@@ -189,7 +200,7 @@ export default types
 
       // this is added just for the reference to show up in the
       // settings page
-      Hotkey.addKey("alt+shift+$n", () => {}, "Select a region");
+      hotkeys.addKey("alt+shift+$n", () => {}, "Select a region");
     },
 
     /**
@@ -211,5 +222,28 @@ export default types
       const next = regions[idx + 1] !== "undefined" ? regions[idx + 1] : regions[0];
 
       next && next.selectRegion();
+    },
+
+    toggleVisibility() {
+      const shouldBeHidden = !self.isAllHidden;
+      self.regions.forEach(area => {
+        if (area.hidden !== shouldBeHidden) {
+          area.toggleHidden();
+        }
+      });
+    },
+
+    setHiddenByLabel(shouldBeHidden, label) {
+      self.regions.forEach(area => {
+        if (area.hidden !== shouldBeHidden) {
+          const l = area.labeling;
+          if (l) {
+            const selected = l.selectedLabels;
+            if (selected.includes(label)) {
+              area.toggleHidden();
+            }
+          }
+        }
+      });
     },
   }));

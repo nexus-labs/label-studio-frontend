@@ -13,6 +13,9 @@ import { PolygonRegionModel } from "../../regions/PolygonRegion";
 import { RectRegionModel } from "../../regions/RectRegion";
 import { EllipseRegionModel } from "../../regions/EllipseRegion";
 import { customTypes } from "../../core/CustomTypes";
+import { parseValue } from "../../utils/data";
+import { AnnotationMixin } from "../../mixins/AnnotationMixin";
+import { clamp } from "../../utils/utilities";
 
 /**
  * Image tag shows an image on the page.
@@ -37,10 +40,11 @@ import { customTypes } from "../../core/CustomTypes";
  * @param {boolean=} [grid=false]             - Show grid
  * @param {number=} [gridSize=30]             - Specify size of the grid
  * @param {string=} [gridColor="#EEEEF4"]     - Color of the grid, opacity is 0.15
- * @param {boolean} [zoomControl=false]       - Whether to show zoom controls in toolbar
- * @param {boolean} [brightnessControl=false] - Whether to show brightness control in toolbar
- * @param {boolean} [contrastControl=false]   - Whether to show contrast control in toolbar
- * @param {boolean} [rotateControl=false]     - Whether to show rotate control in toolbar
+ * @param {boolean} [zoomControl=false]       - Show zoom controls in toolbar
+ * @param {boolean} [brightnessControl=false] - Show brightness control in toolbar
+ * @param {boolean} [contrastControl=false]   - Show contrast control in toolbar
+ * @param {boolean} [rotateControl=false]     - Show rotate control in toolbar
+ * @param {boolean} [crosshair=false]         – Show crosshair cursor
  */
 const TagAttrs = types.model({
   name: types.identifier,
@@ -64,6 +68,7 @@ const TagAttrs = types.model({
   brightnesscontrol: types.optional(types.boolean, false),
   contrastcontrol: types.optional(types.boolean, false),
   rotatecontrol: types.optional(types.boolean, false),
+  crosshair: types.optional(types.boolean, false),
 });
 
 const IMAGE_CONSTANTS = {
@@ -83,7 +88,6 @@ const IMAGE_CONSTANTS = {
 const Model = types
   .model({
     type: "image",
-    _value: types.optional(types.string, ""),
 
     // tools: types.array(BaseTool),
 
@@ -148,7 +152,33 @@ const Model = types
       [],
     ),
   })
+  .volatile(self => ({
+    currentImage: 0,
+    stageRatio: 1,
+  }))
   .views(self => ({
+    get store() {
+      return getRoot(self);
+    },
+
+    get parsedValue() {
+      return parseValue(self.value, self.store.task.dataObj);
+    },
+
+    // @todo the name is for backward compatibility; change the name later
+    get _value() {
+      const value = self.parsedValue;
+      if (Array.isArray(value)) return value[self.currentImage];
+      return value;
+    },
+
+    get images() {
+      const value = self.parsedValue;
+      if (!value) return [];
+      if (Array.isArray(value)) return value;
+      return [value];
+    },
+
     /**
      * @return {boolean}
      */
@@ -157,20 +187,25 @@ const Model = types
       return states && states.length > 0;
     },
 
-    /**
-     * @return {object}
-     */
-    get annotation() {
-      // return Types.getParentOfTypeString(self, "Annotation");
-      return getRoot(self).annotationStore.selected;
-    },
-
     get regs() {
       return self.annotation?.regionStore.regions.filter(r => r.object === self) || [];
     },
 
     get selectedShape() {
       return self.regs.find(r => r.selected);
+    },
+
+    get stageTranslate() {
+      return {
+        0: { x: 0, y: 0 },
+        90: { x: 0, y: self.stageHeight },
+        180: { x: self.stageWidth, y: self.stageHeight },
+        270: { x: self.stageWidth, y: 0 },
+      }[self.rotation];
+    },
+
+    get stageScale() {
+      return self.zoomScale * self.stageRatio;
     },
 
     /**
@@ -208,6 +243,23 @@ const Model = types
       const name = self.controlButton();
       return getType(name).name;
     },
+
+    get stageComponentSize() {
+      if ((self.rotation + 360) % 180 === 90) {
+        return {
+          width: self.stageHeight * self.stageRatio,
+          height: self.stageWidth * self.stageRatio,
+        };
+      }
+      return {
+        width: self.stageWidth * self.stageRatio,
+        height: self.stageHeight * self.stageRatio,
+      };
+    },
+
+    get zoomBy() {
+      return parseFloat(self.zoomby);
+    },
   }))
 
   // actions for the tools
@@ -231,7 +283,21 @@ const Model = types
 
     return { afterCreate, getToolsManager };
   })
-
+  .extend(self => {
+    let skipInteractions = false;
+    return {
+      views: {
+        getSkipInteractions() {
+          return skipInteractions;
+        },
+      },
+      actions: {
+        setSkipInteractions(value) {
+          skipInteractions = value;
+        },
+      },
+    };
+  })
   .actions(self => ({
     freezeHistory() {
       //self.annotation.history.freeze();
@@ -261,6 +327,10 @@ const Model = types
       self.gridSize = value;
     },
 
+    setCurrentImage(i) {
+      self.currentImage = i;
+    },
+
     /**
      * Set pointer of X and Y
      */
@@ -281,8 +351,50 @@ const Model = types
     },
 
     setZoomPosition(x, y) {
-      self.zoomingPositionX = x;
-      self.zoomingPositionY = y;
+      self.zoomingPositionX = clamp(
+        x,
+        self.stageComponentSize.width - self.stageComponentSize.width * self.zoomScale,
+        0,
+      );
+      self.zoomingPositionY = clamp(
+        y,
+        self.stageComponentSize.height - self.stageComponentSize.height * self.zoomScale,
+        0,
+      );
+    },
+
+    handleZoom(val, mouseRelativePos = { x: self.stageWidth / 2, y: self.stageHeight / 2 }) {
+      if (val) {
+        self.freezeHistory();
+        const stage = self.stageRef;
+        let stageScale = self.stageScale;
+        let zoomScale = self.zoomScale;
+
+        let mouseAbsolutePos;
+        let zoomingPosition;
+        window.stage = stage;
+        mouseAbsolutePos = {
+          x: (mouseRelativePos.x - self.zoomingPositionX) / stageScale,
+          y: (mouseRelativePos.y - self.zoomingPositionY) / stageScale,
+        };
+
+        stageScale = val > 0 ? stageScale * self.zoomBy : stageScale / self.zoomBy;
+        zoomScale = val > 0 ? zoomScale * self.zoomBy : zoomScale / self.zoomBy;
+
+        zoomingPosition = {
+          x: -(mouseAbsolutePos.x - mouseRelativePos.x / stageScale) * stageScale,
+          y: -(mouseAbsolutePos.y - mouseRelativePos.y / stageScale) * stageScale,
+        };
+        if (self.negativezoom !== true && zoomScale <= 1) {
+          self.setZoom(1, 0, 0);
+          return;
+        }
+        if (zoomScale <= 1) {
+          self.setZoom(zoomScale, 0, 0);
+          return;
+        }
+        self.setZoom(zoomScale, zoomingPosition.x, zoomingPosition.y);
+      }
     },
 
     /**
@@ -299,6 +411,10 @@ const Model = types
 
     setStageRef(ref) {
       self.stageRef = ref;
+
+      const currentTool = self.getToolsManager().findSelectedTool();
+      currentTool?.updateCursor?.();
+
       // Konva updates ref repeatedly and this breaks brush scaling
       if (self.initialWidth > 1) return;
       self.initialWidth = ref && ref.attrs && ref.attrs.width ? ref.attrs.width : 1;
@@ -312,27 +428,29 @@ const Model = types
 
     rotate(degree = -90) {
       self.rotation = (self.rotation + degree + 360) % 360;
-
-      // 1. swap canvas sizes to correct relative calculations
-      const w = self.stageWidth;
-      self.stageWidth = self.stageHeight;
-      self.stageHeight = w;
-      const nw = self.naturalWidth;
-      self.naturalWidth = self.naturalHeight;
-      self.naturalHeight = nw;
-
-      const ratio = self.stageHeight / self.stageWidth;
-
-      // 2. rotate regions
-      self.regions.forEach(s => s.rotate(degree));
-
-      // 3. scale to fit original width and resize all regions
-      self._updateImageSize({
-        width: w,
-        height: Math.round(ratio * w),
-        naturalWidth: self.naturalWidth,
-        naturalHeight: self.naturalHeight,
-      });
+      let ratioK = 1 / self.stageRatio;
+      if ((self.rotation + 360) % 180 === 90) {
+        self.stageRatio = self.initialWidth / self.initialHeight;
+      } else {
+        self.stageRatio = 1;
+      }
+      ratioK = ratioK * self.stageRatio;
+      if (degree === -90) {
+        this.setZoomPosition(
+          self.zoomingPositionY * ratioK,
+          self.stageComponentSize.height -
+            self.zoomingPositionX * ratioK -
+            self.stageComponentSize.height * self.zoomScale,
+        );
+      }
+      if (degree === 90) {
+        this.setZoomPosition(
+          self.stageComponentSize.width -
+            self.zoomingPositionY * ratioK -
+            self.stageComponentSize.width * self.zoomScale,
+          self.zoomingPositionX * ratioK,
+        );
+      }
     },
 
     _updateImageSize({ width, height, naturalWidth, naturalHeight, userResize }) {
@@ -340,11 +458,25 @@ const Model = types
         self.naturalWidth = naturalWidth;
         self.naturalHeight = naturalHeight;
       }
+      if ((self.rotation + 360) % 180 === 90) {
+        self.stageWidth = width;
+        self.stageHeight = Math.round((width / self.initialWidth) * self.initialHeight);
+      } else {
+        self.stageWidth = width;
+        self.stageHeight = height;
+      }
 
-      self.stageWidth = width;
-      self.stageHeight = height;
       self.sizeUpdated = true;
+      self._updateRegionsSizes({
+        width: self.stageWidth,
+        height: self.stageHeight,
+        naturalWidth,
+        naturalHeight,
+        userResize,
+      });
+    },
 
+    _updateRegionsSizes({ width, height, naturalWidth, naturalHeight, userResize }) {
       self.regions.forEach(shape => {
         shape.updateImageSize(width / naturalWidth, height / naturalHeight, width, height, userResize);
       });
@@ -357,17 +489,7 @@ const Model = types
       const { width, height, naturalWidth, naturalHeight } = ev.target;
       self.initialWidth = width;
       self.initialHeight = height;
-      if ((self.rotation + 360) % 180 === 90) {
-        // swap sizes
-        self._updateImageSize({
-          width: height,
-          height: width,
-          naturalWidth: naturalHeight,
-          naturalHeight: naturalWidth,
-        });
-      } else {
-        self._updateImageSize({ width, height, naturalWidth, naturalHeight });
-      }
+      self._updateImageSize({ width, height, naturalWidth, naturalHeight });
       // after regions' sizes adjustment we have to reset all saved history changes
       // mobx do some batch update here, so we have to reset it asynchronously
       // this happens only after initial load, so it's safe
@@ -391,15 +513,19 @@ const Model = types
 
     // convert screen coords to image coords considering zoom
     fixZoomedCoords([x, y]) {
-      return [(x - self.zoomingPositionX) / self.zoomScale, (y - self.zoomingPositionY) / self.zoomScale];
       // good official way, but maybe a bit slower and with repeating cloning
-      // const p = self.stageRef.getAbsoluteTransform().copy().invert().point({ x, y });
-      // return [p.x, p.y];
+      const p = self.stageRef
+        .getAbsoluteTransform()
+        .copy()
+        .invert()
+        .point({ x, y });
+      return [p.x, p.y];
     },
 
     // convert image coords to screen coords considering zoom
     zoomOriginalCoords([x, y]) {
-      return [x * self.zoomScale + self.zoomingPositionX, y * self.zoomScale + self.zoomingPositionY];
+      const p = self.stageRef.getAbsoluteTransform().point({ x, y });
+      return [p.x, p.y];
     },
 
     /**
@@ -459,7 +585,7 @@ const Model = types
     },
   }));
 
-const ImageModel = types.compose("ImageModel", TagAttrs, Model, ProcessAttrsMixin, ObjectBase);
+const ImageModel = types.compose("ImageModel", TagAttrs, Model, ObjectBase, AnnotationMixin);
 
 const HtxImage = inject("store")(ImageView);
 

@@ -3,15 +3,18 @@
 import { types, getEnv } from "mobx-state-tree";
 
 import AnnotationStore from "./AnnotationStore";
-import Hotkey from "../core/Hotkey";
+import { Hotkey } from "../core/Hotkey";
 import InfoModal from "../components/Infomodal/Infomodal";
 import Project from "./ProjectStore";
 import Settings from "./SettingsStore";
 import Task from "./TaskStore";
-import User from "./UserStore";
+import User, { UserExtended } from "./UserStore";
 import Utils from "../utils";
-import { delay } from "../utils/utilities";
+import { delay, isDefined } from "../utils/utilities";
 import messages from "../utils/messages";
+import { guidGenerator } from "../utils/unique";
+
+const hotkeys = Hotkey("AppStore");
 
 export default types
   .model("AppStore", {
@@ -43,6 +46,7 @@ export default types
     annotationStore: types.optional(AnnotationStore, {
       annotations: [],
       predictions: [],
+      history: [],
     }),
 
     /**
@@ -95,9 +99,17 @@ export default types
      * Finish of labeling
      */
     labeledSuccess: types.optional(types.boolean, false),
+
+    /**
+     * Show or hide comments section
+     */
+    showComments: false,
+
+    users: types.optional(types.array(UserExtended), [])
   })
-  .volatile(self => ({
+  .volatile(() => ({
     version: typeof LSF_VERSION === "string" ? LSF_VERSION : "0.0.0",
+    initialized: false,
   }))
   .views(self => ({
     /**
@@ -105,6 +117,11 @@ export default types
      */
     get alert() {
       return getEnv(self).alert;
+    },
+
+    get hasSegmentation() {
+      const match = Array.from(self.annotationStore.names.values()).map(({type}) => !!type.match(/labels/));
+      return match.find(v => v === true) ?? false;
     },
   }))
   .actions(self => {
@@ -149,6 +166,10 @@ export default types
       return self.interfaces.push(name);
     }
 
+    function toggleComments(state) {
+      return (self.showComments = state);
+    }
+
     /**
      * Function
      */
@@ -156,25 +177,28 @@ export default types
       // important thing to detect Area atomatically: it hasn't access to store, only via global
       window.Htx = self;
 
+      // Unbind previous keys in case LS was re-initialized
+      hotkeys.unbindAll();
+
       /**
        * Hotkey for submit
        */
-      Hotkey.addKey("ctrl+enter", self.submitAnnotation, "Submit a task");
+      if (self.hasInterface("submit")) hotkeys.addKey("ctrl+enter", self.submitAnnotation, "Submit a task");
 
       /**
        * Hotkey for skip task
        */
-      if (self.hasInterface("skip")) Hotkey.addKey("ctrl+space", self.skipTask, "Skip a task");
+      if (self.hasInterface("skip")) hotkeys.addKey("ctrl+space", self.skipTask, "Skip a task");
 
       /**
        * Hotkey for update annotation
        */
-      if (self.hasInterface("update")) Hotkey.addKey("alt+enter", self.updateAnnotation, "Update a task");
+      if (self.hasInterface("update")) hotkeys.addKey("alt+enter", self.updateAnnotation, "Update a task");
 
       /**
        * Hotkey for delete
        */
-      Hotkey.addKey(
+      hotkeys.addKey(
         "command+backspace, ctrl+backspace",
         function() {
           const { selected } = self.annotationStore;
@@ -186,7 +210,7 @@ export default types
       );
 
       // create relation
-      Hotkey.addKey(
+      hotkeys.addKey(
         "r",
         function() {
           const c = self.annotationStore.selected;
@@ -197,32 +221,44 @@ export default types
         "Create relation when region is selected",
       );
 
+      // Focus fist focusable perregion when region is selected
+      hotkeys.addKey(
+        "enter",
+        function(e) {
+          e.preventDefault();
+          const c = self.annotationStore.selected;
+          if (c && c.highlightedNode && !c.relationMode) {
+            c.highlightedNode.requestPerRegionFocus();
+          }
+        }
+      );
+
       // unselect region
-      Hotkey.addKey("u", function() {
+      hotkeys.addKey("u", function() {
         const c = self.annotationStore.selected;
         if (c && !c.relationMode) {
           c.unselectAll();
         }
       });
 
-      Hotkey.addKey("h", function() {
+      hotkeys.addKey("h", function() {
         const c = self.annotationStore.selected;
         if (c && c.highlightedNode && !c.relationMode) {
           c.highlightedNode.toggleHidden();
         }
       });
 
-      Hotkey.addKey("command+z, ctrl+z", function() {
+      hotkeys.addKey("command+z, ctrl+z", function() {
         const { history } = self.annotationStore.selected;
         history && history.canUndo && history.undo();
       });
 
-      Hotkey.addKey("command+shift+z, ctrl+shift+z", function() {
+      hotkeys.addKey("command+shift+z, ctrl+shift+z", function() {
         const { history } = self.annotationStore.selected;
         history && history.canRedo && history.redo();
       });
 
-      Hotkey.addKey(
+      hotkeys.addKey(
         "escape",
         function() {
           const c = self.annotationStore.selected;
@@ -235,7 +271,7 @@ export default types
         "Unselect region, exit relation mode",
       );
 
-      Hotkey.addKey(
+      hotkeys.addKey(
         "backspace",
         function() {
           const c = self.annotationStore.selected;
@@ -246,7 +282,7 @@ export default types
         "Delete selected region",
       );
 
-      Hotkey.addKey(
+      hotkeys.addKey(
         "alt+tab",
         function() {
           const c = self.annotationStore.selected;
@@ -255,7 +291,7 @@ export default types
         "Circle through entities",
       );
 
-      getEnv(self).onLabelStudioLoad(self);
+      getEnv(self).events.invoke('labelStudioLoad', self);
     }
 
     /**
@@ -288,9 +324,9 @@ export default types
 
     function submitDraft(c) {
       return new Promise(resolve => {
-        const fn = getEnv(self).onSubmitDraft;
-        if (!fn) return resolve();
-        const res = fn(self, c);
+        const events = getEnv(self).events;
+        if (!events.hasEvent('submitDraft')) return resolve();
+        const res = events.invokeFirst('submitDraft', self, c);
         if (res && res.then) res.then(resolve);
         else resolve(res);
       });
@@ -310,29 +346,57 @@ export default types
     }
 
     function submitAnnotation() {
-      const c = self.annotationStore.selected;
-      c.beforeSend();
+      const entity = self.annotationStore.selected;
+      entity.beforeSend();
 
-      if (!c.validate()) return;
+      if (!entity.validate()) return;
 
-      c.sendUserGenerate();
-      c.dropDraft();
-      handleSubmittingFlag(() => getEnv(self).onSubmitAnnotation(self, c));
+      entity.sendUserGenerate();
+      handleSubmittingFlag(() => {
+        getEnv(self).events.invoke('submitAnnotation', self, entity);
+      });
+      entity.dropDraft();
     }
 
     function updateAnnotation() {
-      const c = self.annotationStore.selected;
-      c.beforeSend();
+      const entity = self.annotationStore.selected;
+      entity.beforeSend();
 
-      if (!c.validate()) return;
+      if (!entity.validate()) return;
 
-      c.dropDraft();
-      getEnv(self).onUpdateAnnotation(self, c);
-      !c.sentUserGenerate && c.sendUserGenerate();
+      getEnv(self).events.invoke('updateAnnotation', self, entity);
+      entity.dropDraft();
+      !entity.sentUserGenerate && entity.sendUserGenerate();
     }
 
     function skipTask() {
-      handleSubmittingFlag(() => getEnv(self).onSkipTask(self), "Error during skip, try again");
+      handleSubmittingFlag(() => {
+        getEnv(self).events.invoke('skipTask', self);
+      }, "Error during skip, try again");
+    }
+
+    function acceptAnnotation() {
+      handleSubmittingFlag(() => {
+        const entity = self.annotationStore.selected;
+        entity.beforeSend();
+        if (!entity.validate()) return;
+
+        const isDirty = entity.history.canUndo;
+        entity.dropDraft();
+        getEnv(self).events.invoke('acceptAnnotation', self, {isDirty, entity});
+      }, "Error during skip, try again");
+    }
+
+    function rejectAnnotation() {
+      handleSubmittingFlag(() => {
+        const entity = self.annotationStore.selected;
+        entity.beforeSend();
+        if (!entity.validate()) return;
+
+        const isDirty = entity.history.canUndo;
+        entity.dropDraft();
+        getEnv(self).events.invoke('rejectAnnotation', self, {isDirty, entity});
+      }, "Error during skip, try again");
     }
 
     /**
@@ -351,24 +415,56 @@ export default types
      * Given annotations and predictions
      * `completions` is a fallback for old projects; they'll be saved as `annotations` anyway
      */
-    function initializeStore({ annotations, completions, predictions }) {
-      const cs = self.annotationStore;
-      cs.initRoot(self.config);
+    function initializeStore({ annotations, completions, predictions, annotationHistory }) {
+      const as = self.annotationStore;
+      as.initRoot(self.config);
 
       // eslint breaks on some optional chaining https://github.com/eslint/eslint/issues/12822
       /* eslint-disable no-unused-expressions */
-      predictions?.forEach(p => {
-        const obj = cs.addPrediction(p);
-        cs.selectPrediction(obj.id);
+      (predictions ?? []).forEach(p => {
+        const obj = as.addPrediction(p);
+        as.selectPrediction(obj.id);
         obj.deserializeAnnotation(p.result);
       });
-      [...(completions || []), ...(annotations || [])]?.forEach((c, i) => {
-        const obj = cs.addAnnotation(c);
-        cs.selectAnnotation(obj.id);
+
+      [...(completions ?? []), ...(annotations ?? [])]?.forEach((c) => {
+        const obj = as.addAnnotation(c);
+        as.selectAnnotation(obj.id);
         obj.deserializeAnnotation(c.draft || c.result);
         obj.reinitHistory();
       });
+
+      self.setHistory(annotationHistory);
       /* eslint-enable no-unused-expressions */
+
+      if (!self.initialized) {
+        self.initialized = true;
+        getEnv(self).events.invoke('storageInitialized', self);
+      }
+    }
+
+    function setHistory(history = []) {
+      const as = self.annotationStore;
+
+      as.clearHistory();
+
+      (history ?? []).forEach(item => {
+        const fixed = isDefined(item.fixed_annotation_history_result);
+        const accepted = item.accepted;
+
+        const obj = as.addHistory({
+          ...item,
+          pk: guidGenerator(),
+          user: item.created_by,
+          createdDate: item.created_at,
+          acceptedState: accepted ? (fixed ? "fixed" : "accepted") : "rejected",
+          editable: false,
+        });
+
+        const result = item.previous_annotation_history_result ?? [];
+
+        obj.deserializeAnnotation(result);
+      });
     }
 
     return {
@@ -381,13 +477,17 @@ export default types
       assignConfig,
       resetState,
       initializeStore,
+      setHistory,
 
       skipTask,
       submitDraft,
       submitAnnotation,
       updateAnnotation,
+      acceptAnnotation,
+      rejectAnnotation,
 
       showModal,
+      toggleComments,
       toggleSettings,
       toggleDescription,
     };

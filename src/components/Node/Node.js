@@ -1,5 +1,4 @@
-import React, { Fragment } from "react";
-import { Badge } from "antd";
+import React from "react";
 import { getType, getRoot } from "mobx-state-tree";
 import { observer } from "mobx-react";
 import {
@@ -16,11 +15,12 @@ import {
 } from "@ant-design/icons";
 
 import styles from "./Node.module.scss";
+import "./Node.styl";
+import { Block, Elem } from "../../utils/bem";
+import Constants from "../../core/Constants";
 
 const NodeViews = {
-  TextRegionModel: ["Text", FontColorsOutlined, node => <span className={null}>{node.text.substring(0, 100)}</span>],
-
-  HyperTextRegionModel: ["HTML", FontColorsOutlined, node => <span style={{ color: "#5a5a5a" }}>{node.text}</span>],
+  RichTextRegionModel: ["HTML", FontColorsOutlined, node => <span style={{ color: "#5a5a5a" }}>{node.text}</span>],
 
   ParagraphsRegionModel: [
     "Paragraphs",
@@ -28,12 +28,12 @@ const NodeViews = {
     node => <span style={{ color: "#5a5a5a" }}>{node.text}</span>,
   ],
 
-  AudioRegionModel: ["Audio", AudioOutlined, node => `Audio ${node.start.toFixed(2)} - ${node.end.toFixed(2)}`],
+  AudioRegionModel: ["Audio", AudioOutlined, node => null],
 
   TimeSeriesRegionModel: [
     "TimeSeries",
     LineChartOutlined,
-    node => `TS ${node.object.formatTime(node.start)} - ${node.object.formatTime(node.end)}`,
+    node => null,
   ],
 
   TextAreaRegionModel: ["Input", MessageOutlined, node => <span style={{ color: "#5a5a5a" }}>{node._value}</span>],
@@ -41,39 +41,29 @@ const NodeViews = {
   RectRegionModel: [
     "Rect",
     BlockOutlined,
-    node => {
-      const w = node.width * node.scaleX;
-      const h = node.height * node.scaleY;
-      return `Rectangle ${w.toFixed(2)} x ${h.toFixed(2)}`;
-    },
+    node => null,
   ],
 
-  PolygonRegionModel: ["Polygon", GatewayOutlined, () => `Polygon`],
+  PolygonRegionModel: ["Polygon", GatewayOutlined, () => null],
 
   EllipseRegionModel: [
     "Ellipse",
     Loading3QuartersOutlined,
-    node => {
-      const radiusX = node.radiusX * node.scaleX;
-      const radiusY = node.radiusY * node.scaleY;
-      const rotation = node.rotation;
-      return `Ellipse ${radiusX.toFixed(2)} x ${radiusY.toFixed(2)}, θ = ${rotation.toFixed(2)}°,
-        center = (${node.x.toFixed(2)}, ${node.y.toFixed(2)})`;
-    },
+    node => null,
   ],
 
   // @todo add coords
   KeyPointRegionModel: [
     "KeyPoint",
     EyeOutlined,
-    node => `KeyPoint ${node.relativeX.toFixed(2)}, ${node.relativeY.toFixed(2)}`,
+    node => null,
   ],
 
-  BrushRegionModel: ["Brush", HighlightOutlined, () => `Brush`],
+  BrushRegionModel: ["Brush", HighlightOutlined, () => null],
 
-  ChoicesModel: ["Classification", ApartmentOutlined, () => `Classification`],
+  ChoicesModel: ["Classification", ApartmentOutlined, () => null],
 
-  TextAreaModel: ["Input", MessageOutlined, () => `Input`],
+  TextAreaModel: ["Input", MessageOutlined, () => null],
   PDFRegionModel: ["PDF", FontColorsOutlined, node => <span className={null}>{node.text}</span>],
 };
 
@@ -81,22 +71,24 @@ const Node = observer(({ className, node }) => {
   const name = getType(node).name;
   if (!(name in NodeViews)) console.error(`No ${name} in NodeView`);
 
-  let [, Icon, getContent] = NodeViews[name];
-
-  if (node.labelsState) {
-    const aliases = node.labelsState.selectedAliases;
-    if (aliases.length)
-      Icon = function() {
-        return <span className={styles.alias}>{aliases.join(",")}</span>;
-      };
-  }
+  let [, , getContent] = NodeViews[name];
+  const labelName = node.labelName;
 
   return (
     <span className={[styles.node, className].filter(Boolean).join(" ")}>
-      <Icon />
+      {labelName}
+      {" "}
       {getContent(node)}
     </span>
   );
+});
+
+const NodeIcon = observer(({ node }) => {
+  const name = getType(node).name;
+  if (!(name in NodeViews)) console.error(`No ${name} in NodeView`);
+
+  const Icon = NodeViews[name][1];
+  return <Icon />;
 });
 
 const NodeMinimal = observer(({ node }) => {
@@ -105,29 +97,17 @@ const NodeMinimal = observer(({ node }) => {
   const name = getType(node).name;
   if (!(name in NodeViews)) return null;
 
-  const oneColor = node.getOneColor();
-  let badgeStyle = {};
-
-  if (oneColor) {
-    badgeStyle = {
-      backgroundColor: oneColor,
-    };
-  } else {
-    badgeStyle = {
-      backgroundColor: "#fff",
-      color: "#999",
-      boxShadow: "0 0 0 1px #d9d9d9 inset",
-    };
-  }
-
   const [text, Icon] = NodeViews[name];
+
   return (
-    <span className={styles.minimal}>
-      {index >= 0 && <Badge count={index + 1} style={badgeStyle} />}
-      <Icon />
+    <Block name="node-minimal" tag="span">
+      {index >= 0 && <Elem name="counter">{index + 1}</Elem>}
+
+      <Elem name="icon" tag={Icon}/>
+
       {text}
-    </span>
+    </Block>
   );
 });
 
-export { Node, NodeMinimal };
+export { Node, NodeIcon, NodeMinimal, NodeViews };

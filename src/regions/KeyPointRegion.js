@@ -1,10 +1,8 @@
 import React, { Fragment } from "react";
 import { Circle } from "react-konva";
-import { observer } from "mobx-react";
 import { types, getRoot, isAlive } from "mobx-state-tree";
 
 import WithStatesMixin from "../mixins/WithStates";
-import Constants, { defaultStyle } from "../core/Constants";
 import NormalizationMixin from "../mixins/Normalization";
 import RegionsMixin from "../mixins/Regions";
 import Registry from "../core/Registry";
@@ -12,6 +10,9 @@ import { ImageModel } from "../tags/object/Image";
 import { guidGenerator } from "../core/Helpers";
 import { LabelOnKP } from "../components/ImageView/LabelOnRegion";
 import { AreaMixin } from "../mixins/AreaMixin";
+import { useRegionColors } from "../hooks/useRegionColor";
+import { AliveRegion } from "./AliveRegion";
+import { KonvaRegionMixin } from "../mixins/KonvaRegion";
 
 const Model = types
   .model({
@@ -52,6 +53,7 @@ const Model = types
       }
     },
 
+    // @todo not used
     rotate(degree) {
       const p = self.rotatePoint(self, degree);
       self.setPosition(p.x, p.y);
@@ -80,27 +82,16 @@ const Model = types
     },
 
     serialize() {
-      const object = self.object;
-      const { naturalWidth, naturalHeight, stageWidth, stageHeight } = object;
-      const degree = -self.parent.rotation;
-      const natural = self.rotateDimensions({ width: naturalWidth, height: naturalHeight }, degree);
-      const { width, height } = self.rotateDimensions({ width: stageWidth, height: stageHeight }, degree);
-
-      const { x, y } = self.rotatePoint(self, degree, false);
-
-      const res = {
-        original_width: natural.width,
-        original_height: natural.height,
+      return {
+        original_width: self.parent.naturalWidth,
+        original_height: self.parent.naturalHeight,
         image_rotation: self.parent.rotation,
-
         value: {
-          x: (x * 100) / width,
-          y: (y * 100) / height,
-          width: (self.width * 100) / width, //  * (self.scaleX || 1)
+          x: self.convertXToPerc(self.x),
+          y: self.convertYToPerc(self.y),
+          width: self.convertHDimensionToPerc(self.width),
         },
       };
-
-      return res;
     },
   }));
 
@@ -110,36 +101,28 @@ const KeyPointRegionModel = types.compose(
   RegionsMixin,
   AreaMixin,
   NormalizationMixin,
+  KonvaRegionMixin,
   Model,
 );
 
 const HtxKeyPointView = ({ item }) => {
-  if (!isAlive(item)) return null;
-  if (item.hidden) return null;
-
   const { store } = item;
 
   const x = item.x;
   const y = item.y;
-  const style = item.style || item.tag || defaultStyle;
 
-  const props = {};
+  const colors = useRegionColors(item);
 
-  props["opacity"] = +style.opacity;
+  const props = {
+    opacity: 1,
+    fill: colors.fillColor,
+    stroke: colors.strokeColor,
+    strokeWidth: colors.strokeWidth,
+    strokeScaleEnabled: false,
+    shadowBlur: 0,
+  };
 
-  if (style.fillcolor) {
-    props["fill"] = style.fillcolor;
-  }
-
-  props["stroke"] = style.strokecolor;
-  props["strokeWidth"] = +style.strokewidth;
-  props["strokeScaleEnabled"] = false;
-  props["shadowBlur"] = 0;
-
-  if (item.highlighted || item.selected) {
-    props["stroke"] = Constants.HIGHLIGHTED_STROKE_COLOR;
-    props["strokeWidth"] = Constants.HIGHLIGHTED_STROKE_WIDTH;
-  }
+  const stage = item.parent.stageRef;
 
   return (
     <Fragment>
@@ -152,6 +135,12 @@ const HtxKeyPointView = ({ item }) => {
         scaleX={1 / item.parent.zoomScale}
         scaleY={1 / item.parent.zoomScale}
         name={item.id}
+        onDragStart={e => {
+          if (item.parent.getSkipInteractions()) {
+            e.currentTarget.stopDrag(e.evt);
+            return;
+          }
+        }}
         onDragEnd={e => {
           const t = e.target;
           item.setPosition(t.getAttr("x"), t.getAttr("y"));
@@ -171,8 +160,6 @@ const HtxKeyPointView = ({ item }) => {
           return { x, y };
         })}
         onMouseOver={e => {
-          const stage = item.parent.stageRef;
-
           if (store.annotationStore.selected.relationMode) {
             item.setHighlight(true);
             stage.container().style.cursor = "crosshair";
@@ -181,7 +168,6 @@ const HtxKeyPointView = ({ item }) => {
           }
         }}
         onMouseOut={e => {
-          const stage = item.parent.stageRef;
           stage.container().style.cursor = "default";
 
           if (store.annotationStore.selected.relationMode) {
@@ -189,26 +175,24 @@ const HtxKeyPointView = ({ item }) => {
           }
         }}
         onClick={e => {
-          const stage = item.parent.stageRef;
-
-          if (!item.annotation.editable) return;
+          if (!item.annotation.editable || item.parent.getSkipInteractions()) return;
 
           if (store.annotationStore.selected.relationMode) {
             stage.container().style.cursor = "default";
           }
 
           item.setHighlight(false);
-          item.onClickRegion();
+          item.onClickRegion(e);
         }}
         {...props}
         draggable={item.editable}
       />
-      <LabelOnKP item={item} />
+      <LabelOnKP item={item} color={colors.strokeColor}/>
     </Fragment>
   );
 };
 
-const HtxKeyPoint = observer(HtxKeyPointView);
+const HtxKeyPoint = AliveRegion(HtxKeyPointView);
 
 Registry.addTag("keypointregion", KeyPointRegionModel, HtxKeyPoint);
 Registry.addRegionType(

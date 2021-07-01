@@ -4,7 +4,7 @@ import { ChoicesModel } from "./Choices";
 import { HyperTextLabelsModel } from "./HyperTextLabels";
 import { KeyPointLabelsModel } from "./KeyPointLabels";
 import { KeyPointModel } from "./KeyPoint";
-import { LabelsModel } from "./Labels";
+import { LabelsModel } from "./Labels/Labels";
 import { ListModel } from "./List";
 import { PairwiseModel } from "./Pairwise";
 import { PolygonLabelsModel } from "./PolygonLabels";
@@ -15,7 +15,7 @@ import { RectangleLabelsModel } from "./RectangleLabels";
 import { RectangleModel } from "./Rectangle";
 import { ShortcutModel } from "./Shortcut";
 import { TaxonomyModel } from "./Taxonomy";
-import { TextAreaModel } from "./TextArea";
+import { TextAreaModel } from "./TextArea/TextArea";
 import { TimeSeriesLabelsModel } from "./TimeSeriesLabels";
 import { ParagraphLabelsModel } from "./ParagraphLabels";
 
